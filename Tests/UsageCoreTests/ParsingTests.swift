@@ -15,6 +15,44 @@ import Testing
     #expect(u.windows[0].resetsAt != nil)
     #expect(u.windows[2].detail == "$12.34 / $50.00")
     #expect(u.headlinePercent == 40)
+    #expect(u.credits.isEmpty)
+}
+
+@Test func claudeParsesCloudCreditsOutsideWindows() throws {
+    let json = """
+    {"seven_day":{"utilization":40,"resets_at":"2026-10-12T00:00:00Z"},
+     "iguana_necktie":{"utilization":25,"resets_at":"2026-11-05T00:00:00Z","limit_dollars":100,"used_dollars":null,"remaining_dollars":null}}
+    """
+    let u = try ClaudeProvider.parse(Data(json.utf8), plan: nil)
+    #expect(u.windows.map(\.label) == ["Weekly"])
+    let c = try #require(u.credits.first)
+    #expect(c.label == "Cloud credits")
+    #expect(c.remaining == 75 && c.total == 100 && c.usedPercent == 25)
+    #expect(c.expiresAt == parseISODate("2026-11-05T00:00:00Z"))
+    #expect(c.summary(locale: Locale(identifier: "en_US")) == "$75.00 of $100.00 left")
+    // Placeholder blocks without a dollar limit are ignored.
+    #expect(ClaudeProvider.parseCloudCredits(["utilization": 0, "limit_dollars": NSNull()]) == nil)
+}
+
+@Test func claudeParsesPrepaidCredits() throws {
+    let json = """
+    {"amount":5597,"currency":"EUR","balance":{"money":{"amount_minor":5597,"currency":"EUR","exponent":2},"credits":null},
+     "tranches":[],"promo_tranches":[{"remaining_amount_minor_units":5596,"granted_amount_minor_units":8500,"currency":"EUR","expires_at":"2026-09-19T00:00:00Z"}],
+     "next_expires_at":"2026-09-19T00:00:00Z"}
+    """
+    let c = try #require(try ClaudeProvider.parsePrepaidCredits(Data(json.utf8)))
+    #expect(c.label == "Usage credits" && c.currency == "EUR")
+    #expect(c.remaining == 55.97 && c.total == 85)
+    #expect(c.expiresAt == parseISODate("2026-09-19T00:00:00Z"))
+    #expect(c.summary(locale: Locale(identifier: "en_US")) == "€55.97 of €85.00 left")
+
+    let bought = #"{"amount":1000,"currency":"USD","tranches":[],"promo_tranches":[]}"#
+    let b = try #require(try ClaudeProvider.parsePrepaidCredits(Data(bought.utf8)))
+    #expect(b.total == nil && b.usedPercent == nil)
+    #expect(b.summary(locale: Locale(identifier: "en_US")) == "$10.00 left")
+
+    let none = #"{"amount":0,"currency":"USD","balance":null,"tranches":[],"promo_tranches":[]}"#
+    #expect(try ClaudeProvider.parsePrepaidCredits(Data(none.utf8)) == nil)
 }
 
 @Test func chatgptParsesPrimaryAndSecondary() throws {
@@ -134,9 +172,13 @@ import Testing
     let u = ProviderUsage(plan: "Pro", windows: [
         UsageWindow(label: "Weekly", usedPercent: 35, resetsAt: Date(timeIntervalSince1970: 1_800_000_000),
                     duration: 7 * 86400, detail: "x"),
-    ])
+    ], credits: [CreditBalance(label: "Cloud credits", remaining: 75, total: 100, currency: "USD",
+                               expiresAt: Date(timeIntervalSince1970: 1_800_000_000))])
     let decoded = try JSONDecoder().decode(ProviderUsage.self, from: JSONEncoder().encode(u))
     #expect(decoded == u)
+    // Values cached before credits existed still load.
+    let old = try JSONDecoder().decode(ProviderUsage.self, from: Data(#"{"plan":"Pro","windows":[]}"#.utf8))
+    #expect(old.credits.isEmpty)
     #expect(UsageError.rateLimited(retryAfter: 60).isRateLimited)
     #expect(UsageError.rateLimited(retryAfter: 60).retryAfter == 60)
     #expect(!UsageError.parse("x").isRateLimited)
@@ -164,4 +206,68 @@ import Testing
         UsageWindow(label: "Session (5h)", usedPercent: 90, resetsAt: now.addingTimeInterval(-1), duration: 5 * 3600),
     ])
     #expect(!reset.isStillRelevant(fetchedAt: now.addingTimeInterval(-60), maxAge: 300, now: now))
+}
+
+@Test func claudeCredentialsExpiry() throws {
+    let json = #"{"claudeAiOauth":{"accessToken":"tok","expiresAt":1793622392000,"subscriptionType":"max"}}"#
+    let c = try ClaudeCredentials.parse(Data(json.utf8))
+    #expect(c.accessToken == "tok" && c.subscriptionType == "max")
+    #expect(!c.isExpired(now: Date(timeIntervalSince1970: 1793622391)))
+    #expect(c.isExpired(now: Date(timeIntervalSince1970: 1793622392)))
+    #expect(throws: UsageError.self) { try ClaudeCredentials.parse(Data(#"{"mcpOAuth":{}}"#.utf8)) }
+}
+
+@Test func claudeTrustPromptDetection() {
+    let prompt = "\u{1B}[1mDo you trust the files in this folder?\u{1B}[22m\r\n\u{1B}[36m❯ 1. Yes, proceed\u{1B}[39m"
+    #expect(ClaudeCLIWaker.isTrustPrompt(prompt))
+    #expect(!ClaudeCLIWaker.isTrustPrompt("\u{1B}[2m? for shortcuts\u{1B}[22m"))
+}
+
+private actor Counter {
+    var value = 0
+    func increment() { value += 1 }
+}
+
+@Test func claudeRefresherBacksOffAfterFailure() async {
+    let calls = Counter()
+    let outcome = Counter()
+    let refresher = ClaudeTokenRefresher(cooldown: 600) { _ in
+        await calls.increment()
+        return await outcome.value > 0
+    }
+    let now = Date()
+    #expect(await !refresher.refresh(now: now) { false })
+    #expect(await !refresher.refresh(now: now.addingTimeInterval(60)) { false })
+    #expect(await calls.value == 1)
+    await outcome.increment()
+    #expect(await refresher.refresh(now: now.addingTimeInterval(601)) { true })
+    #expect(await refresher.refresh(now: now.addingTimeInterval(602)) { true })
+    #expect(await calls.value == 3)
+}
+
+@Test func claudeWakerAnswersTrustPromptSendsStatusAndStops() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let marker = dir.appendingPathComponent("refreshed"), pidFile = dir.appendingPathComponent("pid")
+    let script = dir.appendingPathComponent("fake-claude")
+    try """
+    #!/bin/bash
+    echo $$ > '\(pidFile.path)'
+    sleep 1.5
+    printf 'Do you trust the files in this folder?\\n> 1. Yes, proceed\\n'
+    read -r answer
+    [ -z "$answer" ] || exit 1
+    while read -r line; do [ "$line" = "/status" ] && break; done
+    touch '\(marker.path)'
+    sleep 60
+    """.write(to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+    let ok = await ClaudeCLIWaker.run(script.path, arguments: [], timeout: 10, statusAfter: 0.5) {
+        FileManager.default.fileExists(atPath: marker.path)
+    }
+    #expect(ok)
+    let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+    #expect(kill(pid, 0) != 0)
 }

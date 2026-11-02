@@ -20,11 +20,15 @@ macOS 14+. It reuses existing CLI logins — no extra credentials are stored:
 
 | Provider | Credential source | Endpoint |
 |----------|-------------------|----------|
-| Claude   | Claude Code OAuth token in the keychain (`claude` login) | `api.anthropic.com/api/oauth/usage` |
+| Claude   | Claude Code OAuth token in the keychain (`claude` login) | `api.anthropic.com/api/oauth/usage`, plus `/profile` and `/organizations/{uuid}/prepaid/credits` for credit balances |
 | ChatGPT  | Codex CLI login (`~/.codex/auth.json`, or `$CODEX_HOME`) | `chatgpt.com/backend-api/wham/usage` |
 | Copilot  | `gh auth token` (or `$GITHUB_TOKEN`) | `api.github.com/copilot_internal/user` |
 
 These are undocumented endpoints and may change. If a token expires, re-run the respective CLI.
+
+Claude Code's token expires after a few hours and is only renewed while `claude` runs. When it has expired, Fuel Gauge briefly starts `claude` in the background (in its own folder under `~/Library/Application Support/FuelGauge`, without MCP servers or hooks) so Claude Code renews it, then stops it. If that fails, it retries after 10 minutes.
+
+For Claude, the panel also lists remaining cloud credits (Claude Code on the web) and prepaid usage credits with their expiry, when the account has any. These don't affect the menu bar. Console API credits (platform.claude.com) aren't shown: they're only reachable with a browser session cookie.
 
 ## Install
 
