@@ -26,13 +26,56 @@ public struct UsageWindow: Sendable, Equatable, Identifiable, Codable {
     }
 }
 
+/// A money balance on the account, such as prepaid credits. Shown in the panel only.
+public struct CreditBalance: Sendable, Equatable, Identifiable, Codable {
+    public var id: String { label }
+    public let label: String
+    /// Amounts in major units of `currency` (e.g. dollars).
+    public let remaining: Double
+    public let total: Double?
+    public let currency: String
+    public let expiresAt: Date?
+
+    public init(label: String, remaining: Double, total: Double?, currency: String, expiresAt: Date?) {
+        self.label = label
+        self.remaining = remaining
+        self.total = total
+        self.currency = currency
+        self.expiresAt = expiresAt
+    }
+
+    /// Share of `total` already spent (0...100), when the total is known.
+    public var usedPercent: Double? {
+        guard let total, total > 0 else { return nil }
+        return min(max((total - remaining) / total, 0), 1) * 100
+    }
+
+    /// E.g. `$75.00 of $100.00 left`, or `€55.97 left` without a known total.
+    public func summary(locale: Locale = .current) -> String {
+        let style = FloatingPointFormatStyle<Double>.Currency(code: currency, locale: locale)
+        let left = remaining.formatted(style)
+        guard let total else { return "\(left) left" }
+        return "\(left) of \(total.formatted(style)) left"
+    }
+}
+
 public struct ProviderUsage: Sendable, Equatable, Codable {
     public let plan: String?
     public let windows: [UsageWindow]
+    public let credits: [CreditBalance]
 
-    public init(plan: String?, windows: [UsageWindow]) {
+    public init(plan: String?, windows: [UsageWindow], credits: [CreditBalance] = []) {
         self.plan = plan
         self.windows = windows
+        self.credits = credits
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        windows = try c.decode([UsageWindow].self, forKey: .windows)
+        // Absent in values cached by older versions.
+        credits = try c.decodeIfPresent([CreditBalance].self, forKey: .credits) ?? []
     }
 
     /// Whether data fetched at `fetchedAt` still reflects reality: recent enough, and no limit has reset since.

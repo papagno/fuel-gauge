@@ -7,7 +7,7 @@ A tiny macOS menu bar app showing current plan usage for **Claude**, **ChatGPT**
 - The menu bar shows the most-used limit per provider next to an icon for each service. When a limit hits 100%, it shows the time left until it resets instead (e.g. `2h15m`).
   Plans with both a 5h session and weekly limits show both, stacked (session on top, weekly below).
 - Click it for per-window details: session/weekly/monthly limits, plan, and reset times.
-- Hover a usage bar to see the **even-pace** marker — where you'd be if you spread usage evenly over the window — and whether you're ahead of or under pace.
+- Each bar has an **even-pace** marker — where you'd be if you spread usage evenly over the window. Hover the bar to see whether you're ahead of or under pace (or, for credits, the amount left).
 - Choose which providers to show from the gear menu (**Show**), and drag sections in the panel to reorder them; the menu bar follows the same order.
 - Refreshes every 5 minutes. Last known values are kept across restarts, and at launch a provider is only fetched if its saved values are older than 5 minutes or a limit has reset since.
 - If an API is rate limited, the last known values stay visible with a ⚠︎ next to them, and the app waits as long as the `Retry-After` header asks before calling that provider again.
@@ -20,11 +20,15 @@ macOS 14+. It reuses existing CLI logins — no extra credentials are stored:
 
 | Provider | Credential source | Endpoint |
 |----------|-------------------|----------|
-| Claude   | Claude Code OAuth token in the keychain (`claude` login) | `api.anthropic.com/api/oauth/usage` |
+| Claude   | Claude Code OAuth token in the keychain (`claude` login) | `api.anthropic.com/api/oauth/usage`, plus `/profile` and `/organizations/{uuid}/prepaid/credits` for credit balances |
 | ChatGPT  | Codex CLI login (`~/.codex/auth.json`, or `$CODEX_HOME`) | `chatgpt.com/backend-api/wham/usage` |
 | Copilot  | `gh auth token` (or `$GITHUB_TOKEN`) | `api.github.com/copilot_internal/user` |
 
 These are undocumented endpoints and may change. If a token expires, re-run the respective CLI.
+
+Claude Code's token expires after a few hours and is only renewed while `claude` runs. When it has expired, Fuel Gauge briefly starts `claude` in the background (in its own folder under `~/Library/Application Support/FuelGauge`, without MCP servers or hooks) so Claude Code renews it, then stops it. If that fails, it retries after 10 minutes.
+
+For Claude, the panel also lists remaining cloud credits (Claude Code on the web) and prepaid usage credits with their expiry, when the account has any. These don't affect the menu bar. Console API credits (platform.claude.com) aren't shown: they're only reachable with a browser session cookie.
 
 ## Install
 

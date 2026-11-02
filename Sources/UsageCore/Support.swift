@@ -1,14 +1,18 @@
 import Foundation
 
 enum Shell {
-    /// Runs a command with a PATH that includes Homebrew locations (GUI apps don't inherit the shell PATH).
+    /// A PATH that includes Homebrew locations (GUI apps don't inherit the shell PATH).
+    static var path: String {
+        "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (ProcessInfo.processInfo.environment["PATH"] ?? "")
+    }
+
     static func run(_ executable: String, _ args: [String]) async throws -> String {
         try await withCheckedThrowingContinuation { cont in
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             p.arguments = [executable] + args
             var env = ProcessInfo.processInfo.environment
-            env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:" + (env["PATH"] ?? "")
+            env["PATH"] = path
             p.environment = env
             let out = Pipe(), err = Pipe()
             p.standardOutput = out
