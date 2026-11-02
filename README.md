@@ -7,7 +7,7 @@ A tiny macOS menu bar app showing current plan usage for **Claude**, **ChatGPT**
 - The menu bar shows the most-used limit per provider next to an icon for each service. When a limit hits 100%, it shows the time left until it resets instead (e.g. `2h15m`).
   Plans with both a 5h session and weekly limits show both, stacked (session on top, weekly below).
 - Click it for per-window details: session/weekly/monthly limits, plan, and reset times.
-- Hover a usage bar to see the **even-pace** marker — where you'd be if you spread usage evenly over the window — and whether you're ahead of or under pace.
+- Each bar has an **even-pace** marker — where you'd be if you spread usage evenly over the window. Hover the bar to see whether you're ahead of or under pace (or, for credits, the amount left).
 - Choose which providers to show from the gear menu (**Show**), and drag sections in the panel to reorder them; the menu bar follows the same order.
 - Refreshes every 5 minutes. Last known values are kept across restarts, and at launch a provider is only fetched if its saved values are older than 5 minutes or a limit has reset since.
 - If an API is rate limited, the last known values stay visible with a ⚠︎ next to them, and the app waits as long as the `Retry-After` header asks before calling that provider again.
